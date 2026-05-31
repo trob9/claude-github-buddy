@@ -16,10 +16,13 @@ import { config } from './config.js';
  * @param {string} branch - Branch to checkout
  * @returns {Promise<{path: string, prepared: boolean, cloned: boolean, checkedOut: boolean, pulled: boolean, error: string|null}>}
  */
-export async function getOrCloneRepo(fullRepoName, branch) {
+export async function getOrCloneRepo(fullRepoName, branch, repoPathOverride) {
   // Extract repo name (last part of path)
   const repoName = fullRepoName.split('/').pop();
-  const repoPath = path.join(config.projectsDir, repoName);
+  // If the caller knows where this repo already lives (a remembered custom
+  // path, or one the user just provided), use it; else default to
+  // <projectsDir>/<repoName>.
+  const repoPath = repoPathOverride || path.join(config.projectsDir, repoName);
 
   console.log(`[GIT] Checking for repo: ${repoName}`);
   console.log(`[GIT] Expected path: ${repoPath}`);
@@ -114,9 +117,10 @@ export async function getOrCloneRepo(fullRepoName, branch) {
       fs.mkdirSync(config.projectsDir, { recursive: true });
     }
 
-    // Clone the repository
+    // Clone the repository. Quote repoPath so Windows paths containing
+    // spaces (e.g. C:\Users\Some User\Projects) don't break the command.
     console.log(`[GIT] Cloning from ${cloneUrl}...`);
-    execSync(`git clone ${cloneUrl} ${repoPath}`, { stdio: 'inherit' });
+    execSync(`git clone ${cloneUrl} "${repoPath}"`, { stdio: 'inherit' });
     status.cloned = true;
 
     // Checkout the branch if it's not the default
@@ -152,11 +156,19 @@ export async function getOrCloneRepo(fullRepoName, branch) {
 }
 
 /**
- * Determine the correct clone URL for the repository
+ * Determine the correct clone URL for the repository.
+ * Honors the configured protocol (config.js → git['github.com'].protocol).
+ * Defaults to HTTPS, which works on Windows via Git Credential Manager and
+ * anywhere `gh auth login` has run — no SSH key required.
  */
 function getCloneUrl(fullRepoName) {
-  // Use github.com SSH
-  return `git@github.com:${fullRepoName}.git`;
+  const host = 'github.com';
+  const protocol = config.git?.[host]?.protocol || 'https';
+
+  if (protocol === 'ssh') {
+    return `git@${host}:${fullRepoName}.git`;
+  }
+  return `https://${host}/${fullRepoName}.git`;
 }
 
 /**

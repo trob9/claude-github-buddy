@@ -5,8 +5,12 @@ This guide will help you set up the GitHub Buddy backend server for the Chrome e
 ## Prerequisites
 
 - Node.js installed (any recent version)
-- macOS (for daemon/launchd features)
+- Git installed and on your PATH
+- Claude CLI installed (`claude` on your PATH) — required for the agent features
 - Git repositories to review
+
+> **Platform note:** The server itself is plain Node.js and runs on macOS, Linux, and Windows.
+> macOS/Linux use the `.command` bash launchers; **Windows users use the `.ps1` launchers and `Start Server.bat`** — see [Windows Setup](#windows-setup) below.
 
 ## Quick Setup
 
@@ -136,6 +140,76 @@ launchctl load ~/Library/LaunchAgents/com.yourusername.github-buddy-server.plist
 ```
 
 **Note:** Replace `/full/path/to/claude-github-buddy` with the actual absolute path.
+
+## Windows Setup
+
+Windows can't run the `.command` bash scripts. Use the PowerShell launchers in `launchers\` and the double-click `Start Server.bat` instead. Everything else (config, the Chrome extension steps, ports) is identical.
+
+### 1. Configure environment (optional)
+
+`.env` is optional on Windows — the defaults already resolve correctly (`%USERPROFILE%\Projects`, HTTPS git). To override:
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+Windows-style values:
+
+```
+PROJECTS_DIR=C:\Users\yourusername\Projects
+PR_REVIEWS_DIR=C:\Users\yourusername\Projects\claude-github-buddy\questions and actions
+GIT_GITHUB_PROTOCOL=https
+```
+
+### 2. Install dependencies
+
+```powershell
+cd server
+npm install
+cd ..
+```
+
+(The launchers also auto-install on first run if `node_modules` is missing.)
+
+### 3. Run the server
+
+**Foreground** (a window stays open; close it to stop):
+
+- Double-click **`Start Server.bat`**, or run `.\"Start Server.bat"` in a terminal.
+
+**Background daemon** (PowerShell):
+
+```powershell
+.\launchers\start_server_daemon.ps1   # start in background
+.\launchers\server_status.ps1         # check if running + port status
+.\launchers\server_logs.ps1           # last 50 log lines
+.\launchers\server_logs.ps1 100       # last 100 lines
+.\launchers\server_logs.ps1 -Follow   # live tail
+.\launchers\stop_server.ps1           # stop
+```
+
+Confirm it's up by visiting <http://localhost:13030/health> — you should see `{"status":"ok",...}`.
+
+> **PowerShell execution policy:** if a script is blocked, either run it as
+> `powershell -ExecutionPolicy Bypass -File .\launchers\start_server_daemon.ps1`,
+> or allow local scripts once with
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+### 4. Auto-start on login (optional)
+
+Use Task Scheduler to run the daemon launcher at logon:
+
+```powershell
+$action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
+  -Argument '-WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\Users\yourusername\Projects\claude-github-buddy\launchers\start_server_daemon.ps1"'
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+Register-ScheduledTask -TaskName 'GitHubBuddyServer' -Action $action -Trigger $trigger
+```
+
+Then load the Chrome extension exactly as described in [step 4](#4-install-chrome-extension) and [step 5](#5-configure-extension) above.
+
+---
 
 ## Configuration Priority
 

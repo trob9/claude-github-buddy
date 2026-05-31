@@ -466,6 +466,49 @@ class AgentClient {
   }
 
   /**
+   * Subscription mode: ask the server to open a visible `claude -p` window that
+   * does the work and closes when done. No WebSocket / monitor panel involved.
+   * @param {object} prInfo
+   * @param {'questions'|'actions'} kind
+   * @param {boolean} useUltrathink
+   * @param {boolean|undefined} skipPermissions  One-off override for
+   *        --dangerously-skip-permissions; undefined = use server setting.
+   * @param {object} [repo]  Repo-location options:
+   *        { repoPath, rememberPath, notInstalled }.
+   */
+  async runInteractive(prInfo, kind, useUltrathink = false, skipPermissions = undefined, repo = {}) {
+    const response = await fetch('http://localhost:47382/runInteractive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prInfo, kind, useUltrathink, skipPermissions,
+        repoPath: repo.repoPath,
+        rememberPath: repo.rememberPath,
+        notInstalled: repo.notInstalled
+      })
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Server error: ${response.status} - ${errorText}`);
+    }
+    return response.json();
+  }
+
+  /**
+   * Ask the server whether this repo already exists on disk.
+   * @returns {Promise<{exists:boolean, path:string|null, defaultPath:string, projectsDir:string}>}
+   */
+  async checkRepo(fullRepoName) {
+    const response = await fetch('http://localhost:47382/checkRepo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fullRepoName })
+    });
+    if (!response.ok) throw new Error(`Server error: ${response.status}`);
+    return response.json();
+  }
+
+  /**
    * Send interrupt message to Claude
    */
   sendInterrupt(message) {

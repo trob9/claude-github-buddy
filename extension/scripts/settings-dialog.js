@@ -28,18 +28,58 @@ async function showSettingsDialog() {
   // Load current directory config from server
   let currentConfig = {
     prReviewsDir: '~/claude-review/questions-and-actions',
-    projectsDir: '~/Projects'
+    projectsDir: '~/Projects',
+    runMode: 'subscription',
+    skipPermissions: false
   };
 
   try {
     const response = await fetch('http://localhost:47382/getConfig');
     const result = await response.json();
     if (result.success) {
-      currentConfig = result.config;
+      currentConfig = { ...currentConfig, ...result.config };
     }
   } catch (error) {
     console.error('Failed to load current config:', error);
   }
+
+  let runMode = currentConfig.runMode || 'interactive';
+  if (runMode === 'subscription') runMode = 'interactive'; // back-compat
+
+  // "Native Claude setup" picker — how the server runs Claude when you trigger
+  // Answer Questions / Start Actions.
+  const runModeOptions = [
+    {
+      value: 'interactive',
+      title: 'Claude subscription — live window',
+      desc: 'Opens a real interactive <code>claude</code> window you can watch and steer. Anthropic treats this as <strong>normal subscription usage</strong> (no API billing). Best if you\'re signed into Claude Code on this machine.'
+    },
+    {
+      value: 'print',
+      title: 'Claude subscription — <code>claude -p</code> (headless)',
+      desc: 'Runs <code>claude -p</code> in a window that closes when done. Per Anthropic\'s billing, <code>-p</code> / Agent-SDK usage is <strong>billed at API rates</strong> from the separate Agent-SDK credit, not your interactive subscription.'
+    },
+    {
+      value: 'sdk',
+      title: 'Anthropic API key (headless Agent SDK)',
+      desc: 'Runs Claude in the background and streams to the in-browser panel. Bills pay-as-you-go to your <code>ANTHROPIC_API_KEY</code>.'
+    },
+    {
+      value: 'vertex',
+      title: 'Google Vertex AI (headless Agent SDK)',
+      desc: 'Runs Claude in the background via Google Vertex billing. Requires Vertex project/region configured in the server environment.'
+    }
+  ];
+
+  const runModeHtml = runModeOptions.map(opt => `
+    <label class="permission-checkbox-label" style="align-items: flex-start;">
+      <input type="radio" name="claude-run-mode" class="permission-checkbox" value="${opt.value}" ${runMode === opt.value ? 'checked' : ''}>
+      <span style="flex:1;">
+        <span class="permission-tool-name-label" style="min-width:0; font-family: inherit;">${opt.title}</span>
+        <span class="permission-tool-description" style="display:block; margin-top:2px;">${opt.desc}</span>
+      </span>
+    </label>
+  `).join('');
 
   const toolsHtml = Object.keys(defaultPermissions).map(tool => `
     <label class="permission-checkbox-label">
@@ -65,6 +105,27 @@ async function showSettingsDialog() {
           <option value="question" ${defaultButtonAction === 'question' ? 'selected' : ''}>Ask a Question</option>
           <option value="action" ${defaultButtonAction === 'action' ? 'selected' : ''}>Mark for Action</option>
         </select>
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <h4 style="margin: 0 0 8px 0; font-size: 14px; font-weight: 600;">What is your native Claude setup?</h4>
+        <p style="margin: 0 0 12px 0; color: #656d76; font-size: 13px;">
+          Controls how the server runs Claude when you click "Answer Questions" or "Start Actions".
+          <a href="https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan" target="_blank" rel="noopener" style="color:#0969da;">How subscription &amp; Agent SDK billing works →</a>
+        </p>
+        <div class="settings-permissions-list">
+          ${runModeHtml}
+        </div>
+
+        <label class="permission-checkbox-label" style="align-items: flex-start; margin-top: 12px;">
+          <input type="checkbox" id="claude-skip-permissions" class="permission-checkbox" ${skipPermissions ? 'checked' : ''}>
+          <span style="flex:1;">
+            <span class="permission-tool-name-label" style="min-width:0; font-family: inherit;">Run autonomously (<code>--dangerously-skip-permissions</code>)</span>
+            <span class="permission-tool-description" style="display:block; margin-top:2px;">
+              Starts the Claude window with permission checks skipped, so it can answer questions and perform actions on its own without stopping to ask. This is usually <strong>needed for the live subscription window</strong> to work hands-off. If left off, you'll be asked once per run whether to enable it for that session — otherwise Claude will pause and wait for your input in its terminal window.
+            </span>
+          </span>
+        </label>
       </div>
 
       <div style="margin-bottom: 24px;">
@@ -181,19 +242,30 @@ async function showSettingsDialog() {
       return;
     }
 
+    // Selected native Claude setup (run mode)
+    const selectedRunMode = dialog.querySelector('input[name="claude-run-mode"]:checked')?.value || runMode;
+    const selectedSkipPermissions = document.getElementById('claude-skip-permissions')?.checked || false;
+
     try {
       const response = await fetch('http://localhost:47382/updateConfig', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectsDir: projectsDir,
-          prReviewsDir: reviewsDir
+          prReviewsDir: reviewsDir,
+          runMode: selectedRunMode,
+          skipPermissions: selectedSkipPermissions
         })
       });
 
       const result = await response.json();
 
       if (result.success) {
+        // Clear content.js's cached server config so the new run mode /
+        // skip-permissions setting takes effect without a page reload.
+        if (typeof window.invalidateClaudeServerConfig === 'function') {
+          window.invalidateClaudeServerConfig();
+        }
         showNotification('✅ Settings saved! Configuration reloaded.');
         dialog.remove();
       } else {

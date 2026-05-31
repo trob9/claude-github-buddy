@@ -73,7 +73,7 @@
   }
 
   // Claude icon SVG - 20x20 container with eyes wider apart and higher up
-  const CLAUDE_ICON_SVG = `<svg aria-hidden="true" focusable="false" class="octicon octicon-claude" viewBox="0 0 8 8" width="20" height="20" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom;">
+  const CLAUDE_ICON_SVG = `<svg aria-hidden="true" focusable="false" class="octicon octicon-claude" viewBox="0 0 8 8" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom;">
     <g fill="currentColor">
       <rect x="1.5" y="1" width="5" height="3.5"/>
       <rect x="0" y="2.25" width="1.5" height="1.25"/>
@@ -100,6 +100,32 @@
   let lastCopilotPosition = null; // Track last known Copilot position
   let currentHoveredRow = null; // Track currently hovered row for non-selection questions
   let isClaudeButtonActive = false; // Track if Claude button or menu is being used
+  let removeButtonTimeout = null; // Hover-bridge: delay button removal when leaving a line
+
+  // Cancel a pending button removal (mouse came back to a line or onto the button).
+  function cancelButtonRemoval() {
+    if (removeButtonTimeout) {
+      clearTimeout(removeButtonTimeout);
+      removeButtonTimeout = null;
+    }
+  }
+
+  // Schedule button removal after a short grace period. This bridges the tiny
+  // gap between leaving a diff line and the mouse arriving on the Claude button,
+  // so the button doesn't flicker out mid-move.
+  function scheduleButtonRemoval() {
+    if (removeButtonTimeout) return;
+    removeButtonTimeout = setTimeout(() => {
+      removeButtonTimeout = null;
+      if (isClaudeButtonActive) return;
+      const claudeButton = document.getElementById('claude-pr-buddy-button');
+      if (claudeButton && !claudeButton.matches(':hover')) {
+        removeClaudeButton();
+        lastCopilotPosition = null;
+        currentHoveredRow = null;
+      }
+    }, 250);
+  }
 
   // Parse PR info from URL and page (delegated to GHAdapter for view-agnostic reads)
   function getPRInfo() {
@@ -117,7 +143,21 @@
   //
   // Function name kept for backwards-compat with the existing call sites.
   async function syncWithCopilotButton() {
-    const pos = GHAdapter.findMountPosition();
+    // While the user is interacting with the Claude button/menu, keep it pinned
+    // where it is — don't let GitHub's ephemeral menu vanishing move it.
+    if (isClaudeButtonActive) {
+      const claudeButton = document.getElementById('claude-pr-buddy-button');
+      if (claudeButton && lastCopilotPosition) {
+        claudeButton.style.left = `${lastCopilotPosition.left}px`;
+        claudeButton.style.top = `${lastCopilotPosition.top}px`;
+      }
+      return;
+    }
+
+    // The anchor is now DETERMINISTIC per row (stable gutter cell), so this can
+    // run on every mutation/scroll without the button ever jumping sideways —
+    // the X stays constant for a given row, only Y tracks scroll.
+    const pos = GHAdapter.findMountPosition(currentHoveredRow);
 
     if (pos) {
       lastCopilotPosition = { left: pos.left, top: pos.top };
@@ -132,21 +172,9 @@
         claudeButton.style.left = `${lastCopilotPosition.left}px`;
         claudeButton.style.top = `${lastCopilotPosition.top}px`;
       }
-    } else if (lastCopilotPosition && isClaudeButtonActive) {
-      // Anchor disappeared (line de-selected) but the user is mid-interaction.
-      // Keep the button pinned to its last known position.
-      const claudeButton = document.getElementById('claude-pr-buddy-button');
-      if (claudeButton) {
-        claudeButton.style.left = `${lastCopilotPosition.left}px`;
-        claudeButton.style.top = `${lastCopilotPosition.top}px`;
-      }
-    } else {
-      const claudeButton = document.getElementById('claude-pr-buddy-button');
-      if (claudeButton && !claudeButton.matches(':hover') && !isClaudeButtonActive) {
-        removeClaudeButton();
-        lastCopilotPosition = null;
-      }
     }
+    // No anchor: removal is handled by the hover-bridge scheduler, not here, so
+    // the button survives the brief move from a diff line onto itself.
   }
 
   // Handle selection for question capture
@@ -550,6 +578,15 @@
             </div>
           </li>
           <li class="prc-ActionList-Divider-rsZFG" aria-hidden="true"></li>
+          <li tabindex="-1" role="menuitem" class="claude-menu-item" data-action="resetClaudeState">
+            <div class="prc-ActionList-ActionListContent-sg9-x">
+              <span class="prc-ActionList-Spacer-dydlX"></span>
+              <span class="prc-ActionList-ActionListSubContent-lP9xj">
+                <span class="prc-ActionList-ItemLabel-TmBhn">Reset Claude state (unstick buttons)</span>
+              </span>
+            </div>
+          </li>
+          <li class="prc-ActionList-Divider-rsZFG" aria-hidden="true"></li>
           <li tabindex="-1" role="menuitem" class="claude-menu-item" data-action="settings">
             <div class="prc-ActionList-ActionListContent-sg9-x">
               <span class="prc-ActionList-Spacer-dydlX"></span>
@@ -667,6 +704,26 @@
     isClaudeButtonActive = false;
   }
 
+  // Escape hatch: force-clear any stuck interactive run and reset both action
+  // buttons to idle. Cancels in-flight polls via the generation bump.
+  function resetClaudeState() {
+    window._claudeRunGen = (window._claudeRunGen || 0) + 1;
+    window._claudeInteractiveBusy = false;
+    if (typeof window._claudeCancelRun === 'function') {
+      try { window._claudeCancelRun(); } catch {}
+    }
+    ['claude-answer-questions-btn', 'claude-complete-actions-btn'].forEach(id => {
+      const b = document.getElementById(id);
+      if (b) {
+        b.disabled = false;
+        b.onclick = null;
+        b.removeAttribute('data-state');
+        b.innerHTML = id === 'claude-answer-questions-btn' ? 'Answer Questions' : 'Start Actions';
+      }
+    });
+    showNotification('🔄 Claude state reset — buttons are ready again.');
+  }
+
   function handleMenuAction(action) {
     switch (action) {
       case 'ask':
@@ -680,6 +737,9 @@
         break;
       case 'refreshQuestionsActions':
         refreshQuestionsAndActions();
+        break;
+      case 'resetClaudeState':
+        resetClaudeState();
         break;
       case 'settings':
         showSettingsDialog();
@@ -1984,9 +2044,9 @@
 
   function displayQuestionInline(entry, index) {
     // Find the specific line(s) of code this question is about
-    const files = document.querySelectorAll('.file');
+    const files = GHAdapter.getAllFiles();
     files.forEach(file => {
-      const fileName = file.querySelector('.file-header [title]')?.getAttribute('title');
+      const fileName = GHAdapter.getFileName(file);
       if (fileName === entry.file) {
         // Check if already displayed (prevent duplicates)
         const existingId = `claude-entry-${index}`;
@@ -2029,7 +2089,7 @@
 
         // Build HTML for the comment (spanning all columns)
         let html = `
-          <td colspan="3" class="claude-comment-cell">
+          <td colspan="${(targetRow.children && targetRow.children.length) || 3}" class="claude-comment-cell">
             <div class="claude-inline-comment ${validationClass}">
               <div class="claude-comment-header">
                 ${CLAUDE_ICON_SVG}
@@ -2437,9 +2497,9 @@
       }
     } else {
       // Create new ad-hoc action box (pink, no question/answer)
-      const files = document.querySelectorAll('.file');
+      const files = GHAdapter.getAllFiles();
       files.forEach(file => {
-        const fileName = file.querySelector('.file-header [title]')?.getAttribute('title');
+        const fileName = GHAdapter.getFileName(file);
         if (fileName === actionEntry.file) {
           const existingId = `claude-action-${actionIndex}`;
           if (document.getElementById(existingId)) return;
@@ -2479,7 +2539,7 @@
           }
 
           const html = `
-            <td colspan="3" class="claude-comment-cell">
+            <td colspan="${(targetRow.children && targetRow.children.length) || 3}" class="claude-comment-cell">
               <div class="claude-inline-comment claude-action-box ${validationClass}">
                 <div class="claude-comment-header">
                   ${CLAUDE_ICON_SVG}
@@ -2716,20 +2776,37 @@
 
   // Add action buttons at top of PR (next to "Review changes")
   function addActionButtons() {
-    // Find the "Review changes" button container
-    const reviewButton = document.querySelector('button[name="review[event]"], .js-reviews-toggle');
-    if (!reviewButton) {
-      console.log('[CLAUDE] Review changes button not found, retrying...');
-      setTimeout(addActionButtons, 500);
-      return;
-    }
-
     // Check if already added
     if (document.getElementById('claude-action-buttons')) return;
 
-    const buttonContainer = reviewButton.closest('.diffbar-item, .gh-header-actions, .gh-header-show');
+    // Legacy: anchor next to the "Review changes" button.
+    const reviewButton = document.querySelector('button[name="review[event]"], .js-reviews-toggle');
+    let buttonContainer = reviewButton
+      ? reviewButton.closest('.diffbar-item, .gh-header-actions, .gh-header-show')
+      : null;
+    let anchorAfter = reviewButton;
+
+    // New experience: no legacy review button. Drop the controls into the diff
+    // toolbar (the file-tree toggle row) or the PR top-bar actions instead.
     if (!buttonContainer) {
-      console.log('[CLAUDE] Button container not found');
+      // New experience: sit next to the "Submit comments" review button.
+      const reviewMenuBtn = document.querySelector('[class*="ReviewMenuButton-module__ReviewMenuButton"]');
+      if (reviewMenuBtn) {
+        buttonContainer = reviewMenuBtn.parentElement;
+        anchorAfter = reviewMenuBtn;
+      } else {
+        buttonContainer =
+          document.querySelector('[data-testid="file-controls-divider"]')?.parentElement ||
+          document.querySelector('[data-testid="expand-file-tree-button"]')?.parentElement ||
+          document.querySelector('[data-testid="collapse-file-tree-button"]')?.parentElement ||
+          document.querySelector('[data-testid="top-bar-actions"]');
+        anchorAfter = null;
+      }
+    }
+
+    if (!buttonContainer) {
+      console.log('[CLAUDE] Toolbar not found yet, retrying...');
+      setTimeout(addActionButtons, 800);
       return;
     }
 
@@ -2797,14 +2874,259 @@
     claudeButtons.appendChild(copyPromptBtn);
     claudeButtons.appendChild(ultrathinkContainer);
 
-    // Insert after review button
-    buttonContainer.insertBefore(claudeButtons, reviewButton.nextSibling);
+    // Insert next to the review button (legacy) or into the toolbar (new).
+    if (anchorAfter && anchorAfter.parentElement === buttonContainer) {
+      buttonContainer.insertBefore(claudeButtons, anchorAfter.nextSibling);
+    } else {
+      buttonContainer.appendChild(claudeButtons);
+    }
     console.log('[CLAUDE] Action buttons added');
+  }
+
+  // Fetch the server's config once and cache it. Holds runMode + skipPermissions.
+  let _serverConfigCache = null;
+  async function getServerConfig() {
+    if (_serverConfigCache) return _serverConfigCache;
+    try {
+      const r = await fetch('http://localhost:47382/getConfig');
+      const j = await r.json();
+      const cfg = j?.config || {};
+      let m = cfg.runMode || 'interactive';
+      if (m === 'subscription') m = 'interactive';
+      _serverConfigCache = { runMode: m, skipPermissions: cfg.skipPermissions === true };
+    } catch {
+      _serverConfigCache = { runMode: 'interactive', skipPermissions: false };
+    }
+    return _serverConfigCache;
+  }
+
+  // "native Claude setup" run mode: 'interactive' | 'print' | 'sdk' | 'vertex'.
+  async function getRunMode() {
+    return (await getServerConfig()).runMode;
+  }
+
+  // Let the settings dialog clear the cache after a save so changes to run mode
+  // / skip-permissions take effect immediately (no page reload needed).
+  window.invalidateClaudeServerConfig = () => { _serverConfigCache = null; };
+
+  // True for the two modes that open a Claude terminal window on the user's PC
+  // (rather than the headless SDK + in-browser panel).
+  function isWindowMode(mode) {
+    return mode === 'interactive' || mode === 'print';
+  }
+
+  // Confirmation shown before opening a Claude window. Wording adapts to the
+  // mode. When `skipAlreadyOn` is false, also offers a one-off checkbox to let
+  // Claude act autonomously (--dangerously-skip-permissions) for this session.
+  // Resolves to { choice: 'proceed'|'cancel'|'settings', skipOnce: boolean }.
+  function showInteractiveConfirmDialog(mode, skipAlreadyOn) {
+    const isPrint = mode === 'print';
+    const heading = isPrint ? 'Run claude -p in a terminal?' : 'Open a live Claude session?';
+    const body = isPrint
+      ? `This will run <code>claude -p</code> in a terminal window on this PC and close it when done. Per Anthropic's billing, <code>-p</code> usage is <strong>billed at API rates</strong> from your Agent-SDK credit — not your interactive subscription.`
+      : `This will open a live, interactive <code>claude</code> window on this PC that you can watch and steer. Anthropic treats this as <strong>normal subscription usage</strong>.`;
+
+    // Autonomy block: only shown when the persistent setting is OFF. If it's
+    // already on, we don't nag — Claude will run autonomously regardless.
+    const autonomyBlock = skipAlreadyOn ? '' : `
+      <label style="display:flex; align-items:flex-start; gap:8px; padding:10px 12px; background:#fff8f0; border:1px solid #ffd8a8; border-radius:6px; margin-bottom:16px; cursor:pointer;">
+        <input type="checkbox" id="claude-skip-once" checked style="margin-top:2px; width:16px; height:16px; flex-shrink:0;">
+        <span style="font-size:13px; line-height:1.5; color:#24292f;">
+          Let Claude work autonomously this session (<code>--dangerously-skip-permissions</code>).
+          This is usually needed for it to answer/act hands-off. <strong>If unchecked, Claude will pause and wait for your input</strong> in its terminal window. Enable it permanently under Settings.
+        </span>
+      </label>`;
+
+    return new Promise((resolve) => {
+      const dialog = document.createElement('div');
+      dialog.className = 'claude-dialog';
+      dialog.innerHTML = `
+        <div class="claude-dialog-content" style="max-width: 520px;">
+          <h3>${heading}</h3>
+          <p style="color:#24292f; font-size:14px; line-height:1.5; margin-bottom:12px;">${body}</p>
+          ${autonomyBlock}
+          <p style="color:#656d76; font-size:13px; line-height:1.5; margin-bottom:16px;">
+            <a href="https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan" target="_blank" rel="noopener" style="color:#0969da;">How subscription &amp; Agent-SDK billing works →</a>
+          </p>
+          <div class="dialog-buttons">
+            <button id="claude-interactive-proceed">Yes, continue</button>
+            <button id="claude-interactive-settings">Go to settings</button>
+            <button id="claude-interactive-cancel">Cancel</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(dialog);
+      const done = (choice) => {
+        const skipOnce = skipAlreadyOn ? true : (dialog.querySelector('#claude-skip-once')?.checked || false);
+        dialog.remove();
+        resolve({ choice, skipOnce });
+      };
+      dialog.querySelector('#claude-interactive-proceed').addEventListener('click', () => done('proceed'));
+      dialog.querySelector('#claude-interactive-settings').addEventListener('click', () => done('settings'));
+      dialog.querySelector('#claude-interactive-cancel').addEventListener('click', () => done('cancel'));
+      dialog.addEventListener('click', (e) => { if (e.target === dialog) done('cancel'); });
+    });
+  }
+
+  // Shown when the repo isn't found on disk. Lets the user point at an existing
+  // clone or say it's not installed (→ Claude clones it). Resolves to
+  // { choice:'have-path'|'not-installed'|'cancel', repoPath, remember }.
+  function showRepoLocationDialog(info) {
+    const repo = currentPRInfo?.fullRepoName || 'this repo';
+    return new Promise((resolve) => {
+      const dialog = document.createElement('div');
+      dialog.className = 'claude-dialog';
+      dialog.innerHTML = `
+        <div class="claude-dialog-content" style="max-width: 540px;">
+          <h3>Where is <code>${escapeHtml(repo)}</code>?</h3>
+          <p style="color:#24292f; font-size:14px; line-height:1.5; margin-bottom:12px;">
+            I couldn't find this repository on your machine. It's not in your projects directory
+            (<code>${escapeHtml(info.projectsDir || '')}</code>).
+          </p>
+          <label style="display:block; font-size:13px; font-weight:500; color:#24292f; margin-bottom:6px;">
+            If it's already cloned somewhere, paste the full path:
+          </label>
+          <input type="text" id="claude-repo-path" placeholder="${escapeHtml(info.defaultPath || 'C:\\\\path\\\\to\\\\repo')}"
+            style="width:100%; padding:8px; border:1px solid #d0d7de; border-radius:6px; font-family:monospace; font-size:12px; margin-bottom:8px;">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#656d76; margin-bottom:16px; cursor:pointer;">
+            <input type="checkbox" id="claude-repo-remember" checked style="width:15px; height:15px;">
+            Remember this location for ${escapeHtml(repo)}
+          </label>
+          <div class="dialog-buttons">
+            <button id="claude-repo-have">Use this path</button>
+            <button id="claude-repo-clone">It's not installed - clone it</button>
+            <button id="claude-repo-cancel">Cancel</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(dialog);
+      const pathInput = dialog.querySelector('#claude-repo-path');
+      pathInput.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const t = (e.clipboardData || window.clipboardData).getData('text');
+        pathInput.value = t.trim().replace(/^['"]|['"]$/g, '');
+      });
+      const done = (choice) => {
+        const repoPath = pathInput.value.trim();
+        const remember = dialog.querySelector('#claude-repo-remember')?.checked || false;
+        dialog.remove();
+        resolve({ choice, repoPath, remember });
+      };
+      dialog.querySelector('#claude-repo-have').addEventListener('click', () => {
+        if (!pathInput.value.trim()) { pathInput.style.borderColor = '#d73a49'; return; }
+        done('have-path');
+      });
+      dialog.querySelector('#claude-repo-clone').addEventListener('click', () => done('not-installed'));
+      dialog.querySelector('#claude-repo-cancel').addEventListener('click', () => done('cancel'));
+      dialog.addEventListener('click', (e) => { if (e.target === dialog) done('cancel'); });
+    });
+  }
+
+  // Subscription-mode flow: confirm → resolve repo location → launch visible
+  // claude window → poll the tracking file until complete → refresh inline
+  // comments. Shared by the Questions and Actions buttons.
+  async function runInteractiveFlow(kind) {
+    // Guard against concurrent runs: a second window racing on the same repo
+    // would cause competing git operations and fighting button states.
+    if (window._claudeInteractiveBusy) {
+      alert('A Claude run is already in progress. Wait for it to finish (or close its window) before starting another.');
+      return;
+    }
+    const cfg = await getServerConfig();
+    const mode = cfg.runMode;
+    const skipAlreadyOn = cfg.skipPermissions;
+    const { choice, skipOnce } = await showInteractiveConfirmDialog(mode, skipAlreadyOn);
+    if (choice === 'cancel') return;
+    if (choice === 'settings') { showSettingsDialog(); return; }
+
+    currentPRInfo = getPRInfo();
+    if (!currentPRInfo) { alert('Could not detect PR information'); return; }
+
+    // Resolve where the repo lives. If the server can't find it on disk, ask.
+    let repoOpts = {};
+    try {
+      const check = await window.agentClient.checkRepo(currentPRInfo.fullRepoName);
+      if (!check.exists) {
+        const loc = await showRepoLocationDialog(check);
+        if (loc.choice === 'cancel') return;
+        if (loc.choice === 'have-path') {
+          repoOpts = { repoPath: loc.repoPath, rememberPath: loc.remember };
+        } else if (loc.choice === 'not-installed') {
+          repoOpts = { notInstalled: true };
+        }
+      }
+    } catch (e) {
+      console.warn('[INTERACTIVE] checkRepo failed, letting server auto-resolve:', e.message);
+    }
+
+    // If the persistent setting is on, let the server use it (send undefined).
+    // Otherwise send the one-off checkbox value chosen in the dialog.
+    const skipPermissions = skipAlreadyOn ? undefined : skipOnce;
+
+    const isQuestions = kind === 'questions';
+    const btn = document.getElementById(isQuestions ? 'claude-answer-questions-btn' : 'claude-complete-actions-btn');
+    const idleLabel = isQuestions ? 'Answer Questions' : 'Start Actions';
+    const ultrathinkCheckbox = document.getElementById('claude-ultrathink-checkbox');
+    const useUltrathink = ultrathinkCheckbox?.checked || false;
+
+    if (btn) { btn.disabled = true; btn.innerHTML = 'Opening Claude…'; }
+    window._claudeInteractiveBusy = true;
+    const finish = () => { window._claudeInteractiveBusy = false; if (btn) { btn.disabled = false; btn.innerHTML = idleLabel; } };
+
+    try {
+      const result = await window.agentClient.runInteractive(currentPRInfo, kind, useUltrathink, skipPermissions, repoOpts);
+      if (!result.success) throw new Error(result.error || 'Failed to launch Claude');
+
+      showNotification('🖥️ Claude window opened — it will edit the file and close when done.');
+      if (btn) btn.innerHTML = 'Claude is working…';
+
+      // Poll the tracking file for completion (up to 15 min).
+      const verify = isQuestions ? verifyAllQuestionsAnswered : verifyAllActionsCompleted;
+      const refresh = isQuestions ? refreshAnswersFromFile : refreshQuestionsAndActions;
+      const deadline = Date.now() + 15 * 60 * 1000;
+
+      const poll = async () => {
+        if (Date.now() > deadline) {
+          showNotification('⌛ Timed out waiting for Claude. Use "Refresh Questions/Actions" when it finishes.');
+          finish();
+          return;
+        }
+        let done = false;
+        try { done = await verify(); } catch {}
+        if (done) {
+          try { await refresh(); } catch {}
+          showNotification(`✅ ${isQuestions ? 'Answers' : 'Actions'} updated from Claude.`);
+          finish();
+        } else {
+          setTimeout(poll, 4000);
+        }
+      };
+      setTimeout(poll, 5000);
+    } catch (error) {
+      console.error('[INTERACTIVE] Error:', error);
+      alert('Failed to open Claude session: ' + error.message);
+      finish();
+    }
   }
 
   async function triggerAnswerQuestions() {
     const btn = document.getElementById('claude-answer-questions-btn');
     const currentState = btn.getAttribute('data-state') || 'idle';
+
+    // Window modes (live subscription window / claude -p) → open a Claude
+    // terminal instead of the headless SDK + in-browser panel.
+    if (isWindowMode(await getRunMode()) && currentState !== 'running') {
+      if (!(await hasQuestions())) {
+        alert('No questions to answer. Please select code and add questions first.');
+        return;
+      }
+      if (!(await hasUnansweredQuestions())) {
+        alert('All questions have already been answered. Add new questions if you need more answers.');
+        return;
+      }
+      await runInteractiveFlow('questions');
+      return;
+    }
 
     // Handle different button states
     if (currentState === 'running') {
@@ -2966,8 +3288,10 @@
     const btn = document.getElementById('claude-complete-actions-btn');
     const currentState = btn.getAttribute('data-state') || 'idle';
 
-    // Handle different button states
-    if (currentState === 'view-progress') {
+    // Handle different button states. (Both 'running' and the legacy
+    // 'view-progress' map to "reopen the monitor panel" — the SDK path sets
+    // 'running', so check both to avoid a dead branch.)
+    if (currentState === 'view-progress' || currentState === 'running') {
       // User wants to view progress - reopen monitor panel
       if (window.agentMonitorPanel) {
         window.agentMonitorPanel.open();
@@ -2990,6 +3314,14 @@
     // Check if all actions are already completed
     if (!(await hasIncompleteActions())) {
       alert('All actions have already been completed. Add new actions if you need more work done.');
+      return;
+    }
+
+    // Window modes (live subscription window / claude -p) → open a Claude
+    // terminal instead of the headless SDK + in-browser panel. (Its own confirm
+    // dialog covers billing, so we skip the SDK-oriented actions dialog below.)
+    if (isWindowMode(await getRunMode())) {
+      await runInteractiveFlow('actions');
       return;
     }
 
@@ -3148,17 +3480,35 @@
     // Listen for clicks (for permalink selections)
     document.addEventListener('click', handleSelection);
 
-    // Track hovered row for non-selection questions (view-agnostic via adapter).
+    // Track the hovered diff line and (re)mount the Claude button on hover.
+    // Pre-1.1.0 the button rode on GitHub's Copilot hover menu; now it anchors
+    // via the adapter, driven from here.
     document.addEventListener('mouseover', (e) => {
+      // Hovering our own button/menu: keep it alive and pinned.
+      if (e.target.closest &&
+          e.target.closest('#claude-pr-buddy-button, #claude-dropdown-menu, #claude-fake-copilot')) {
+        cancelButtonRemoval();
+        return;
+      }
       const row = GHAdapter.getLineRow(e.target);
       if (row && GHAdapter.getCodeCell(row)) {
+        cancelButtonRemoval();
         currentHoveredRow = row;
+        syncWithCopilotButton();
+      } else if (!isClaudeButtonActive) {
+        // Off the diff — schedule (don't force) removal, so the short hop from a
+        // diff line onto the Claude button doesn't flicker it out. If the mouse
+        // lands on the button first, the handler above cancels this.
+        scheduleButtonRemoval();
       }
     });
 
     // Watch for Copilot button changes and sync Claude button with it
     copilotObserver = new MutationObserver(() => {
       syncWithCopilotButton();
+      // GitHub's React toolbar re-renders and wipes our injected controls, so
+      // re-add them whenever they go missing (addActionButtons no-ops if present).
+      if (!document.getElementById('claude-action-buttons')) addActionButtons();
     });
 
     // Observe the entire document for Copilot button appearance/movement
@@ -3211,6 +3561,11 @@
     const url = location.href;
     if (url !== lastUrl) {
       lastUrl = url;
+      // Leaving the page invalidates any in-flight interactive run: bump the
+      // generation so its poll no-ops, and clear the busy flag so the new view
+      // isn't permanently blocked by a run the user navigated away from.
+      window._claudeRunGen = (window._claudeRunGen || 0) + 1;
+      window._claudeInteractiveBusy = false;
       init();
     }
   }).observe(document, { subtree: true, childList: true });

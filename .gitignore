@@ -12,6 +12,10 @@ questions and actions/
 # macOS
 .DS_Store
 
+# Windows
+Thumbs.db
+Desktop.ini
+
 # Extension packaging
 *.zip
 *.crx
@@ -32,3 +36,4 @@ npm-debug.log*
 server/server.pid
 server/launchd.log
 server/launchd.error.log
+server/server.error.log

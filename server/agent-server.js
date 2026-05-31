@@ -14,11 +14,47 @@ import { getOrCloneRepo } from './git-helper.js';
 
 const WS_PORT = config.wsPort;
 
+/**
+ * Build the environment the Agent SDK runs Claude under.
+ *
+ * Auth model (this is the important bit):
+ *   - By DEFAULT we pass the environment through untouched, which means the
+ *     Agent SDK authenticates exactly like the local `claude` CLI does — using
+ *     whatever you logged in with via `claude login` (i.e. your Claude
+ *     subscription / Pro / Max OAuth token in ~/.claude). No API key, no
+ *     Vertex, no extra config. This is what makes it "just work" on a machine
+ *     where you're already signed into Claude Code.
+ *   - Vertex is now OPT-IN: set CLAUDE_CODE_USE_VERTEX=1 in .env (plus the
+ *     project/region) to use Google Vertex instead. Previously this was forced
+ *     on, which is why the agent failed on machines without Vertex configured.
+ */
+function buildAgentEnv() {
+  const env = { ...process.env };
+  if (process.env.CLAUDE_CODE_USE_VERTEX === '1') {
+    env.CLAUDE_CODE_USE_VERTEX = '1';
+    env.ANTHROPIC_VERTEX_PROJECT_ID = process.env.ANTHROPIC_VERTEX_PROJECT_ID || '';
+    env.CLOUD_ML_REGION = process.env.CLOUD_ML_REGION || '';
+  } else {
+    // Make sure a stray Vertex flag in the ambient env doesn't force it on.
+    delete env.CLAUDE_CODE_USE_VERTEX;
+  }
+  return env;
+}
+
 // Session management
 const sessions = new Map(); // sessionId → { socket, settings, workspace, pendingPermissions, abortController }
 
-// WebSocket server
+// WebSocket server. A clean EADDRINUSE message beats an unhandled stack trace
+// when the port is taken (usually: the server is already running).
 const wss = new WebSocketServer({ port: WS_PORT });
+wss.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`\n❌ WebSocket port ${WS_PORT} is already in use.`);
+    console.error('   The server may already be running. Stop it first, or change WS_PORT in .env.\n');
+    process.exit(1);
+  }
+  console.error('[AGENT-WS] WebSocket server error:', err);
+});
 
 console.log(`🔌 Agent WebSocket server running on ws://localhost:${WS_PORT}`);
 
@@ -293,12 +329,7 @@ ${repoInstructions}
           console.log('[AGENT] 🔍 canUseTool result:', result);
           return result;
         },
-        env: {
-          CLAUDE_CODE_USE_VERTEX: '1',
-          ANTHROPIC_VERTEX_PROJECT_ID: process.env.ANTHROPIC_VERTEX_PROJECT_ID || '',
-          CLOUD_ML_REGION: process.env.CLOUD_ML_REGION || '',
-          ...process.env
-        },
+        env: buildAgentEnv(),
         abortController: session.abortController,
         maxTurns: 20
       }
@@ -757,12 +788,7 @@ ${repoInstructions}
           console.log('[AGENT] 🔍 canUseTool result:', result);
           return result;
         },
-        env: {
-          CLAUDE_CODE_USE_VERTEX: '1',
-          ANTHROPIC_VERTEX_PROJECT_ID: process.env.ANTHROPIC_VERTEX_PROJECT_ID || '',
-          CLOUD_ML_REGION: process.env.CLOUD_ML_REGION || '',
-          ...process.env
-        },
+        env: buildAgentEnv(),
         abortController: session.abortController,
         maxTurns: 30
       }
