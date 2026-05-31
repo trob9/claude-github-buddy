@@ -4,6 +4,42 @@
 (function() {
   'use strict';
 
+  // True once Chrome has torn down this content script's extension context
+  // (happens when the extension is reloaded/updated while this tab's old script
+  // is still running). Any chrome.* call then throws "Extension context
+  // invalidated". We detect it, stop our observers/loops, and tell the user to
+  // refresh — rather than letting an uncaught throw freeze the dynamic button.
+  let extensionContextDead = false;
+  function isExtensionAlive() {
+    try { return !extensionContextDead && !!(chrome.runtime && chrome.runtime.id); }
+    catch { return false; }
+  }
+  function markExtensionDead() {
+    if (extensionContextDead) return;
+    extensionContextDead = true;
+    try { if (copilotObserver) copilotObserver.disconnect(); } catch {}
+    const existing = document.getElementById('claude-pr-buddy-button');
+    if (existing) existing.remove();
+    try {
+      if (typeof showNotification === 'function') {
+        showNotification('🔄 Extension was reloaded — refresh this page to keep using Claude GitHub Buddy.');
+      }
+    } catch {}
+    console.warn('[Claude GitHub Buddy] Extension context invalidated — refresh the page.');
+  }
+
+  // Safe wrapper for chrome.storage.local.get that never throws on a dead
+  // context; returns {} so callers fall back to their defaults.
+  async function safeStorageGet(keys) {
+    if (!isExtensionAlive()) { markExtensionDead(); return {}; }
+    try {
+      return await chrome.storage.local.get(keys);
+    } catch (e) {
+      if (String(e && e.message).includes('Extension context invalidated')) markExtensionDead();
+      return {};
+    }
+  }
+
   // Simple hash function for code validation
   function hashCode(str) {
     let hash = 0;
@@ -143,6 +179,9 @@
   //
   // Function name kept for backwards-compat with the existing call sites.
   async function syncWithCopilotButton() {
+    // If the extension was reloaded, stop touching the DOM / chrome APIs so an
+    // uncaught "Extension context invalidated" can't freeze the page.
+    if (!isExtensionAlive()) { markExtensionDead(); return; }
     // While the user is interacting with the Claude button/menu, keep it pinned
     // where it is — don't let GitHub's ephemeral menu vanishing move it.
     if (isClaudeButtonActive) {
@@ -249,7 +288,7 @@
     const wasActive = isClaudeButtonActive;
 
     // Get user preference for default action
-    const result = await chrome.storage.local.get('default_button_action');
+    const result = await safeStorageGet('default_button_action');
     const defaultAction = result.default_button_action || 'question';
 
     // Set tooltip text based on preference
@@ -287,7 +326,7 @@
       closeDropdownMenu();
 
       // Check user preference for default action
-      const result = await chrome.storage.local.get('default_button_action');
+      const result = await safeStorageGet('default_button_action');
       const defaultAction = result.default_button_action || 'question';
 
       if (defaultAction === 'action') {
@@ -1312,7 +1351,7 @@
 
           // Get existing questions from storage
           const storageKey = `pr_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-          const existingData = await chrome.storage.local.get(storageKey);
+          const existingData = await safeStorageGet(storageKey);
           const existing = existingData[storageKey] || [];
 
           // Merge parsed with existing (additive)
@@ -1358,7 +1397,7 @@
 
           // Get existing actions from storage
           const storageKey = `actions_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-          const existingData = await chrome.storage.local.get(storageKey);
+          const existingData = await safeStorageGet(storageKey);
           const existing = existingData[storageKey] || [];
 
           // Merge parsed with existing (additive)
@@ -1579,7 +1618,7 @@
 
     // Update the action in storage
     const storageKey = `actions_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-    const data = await chrome.storage.local.get(storageKey);
+    const data = await safeStorageGet(storageKey);
     const actions = data[storageKey] || [];
 
     if (actions[actionIndex]) {
@@ -1743,7 +1782,7 @@
 
     // Save to local storage
     const storageKey = `pr_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-    const existingData = await chrome.storage.local.get(storageKey);
+    const existingData = await safeStorageGet(storageKey);
     const questions = existingData[storageKey] || [];
     questions.push(entry);
 
@@ -1805,7 +1844,7 @@
 
     // Save to local storage
     const storageKey = `actions_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-    const existingData = await chrome.storage.local.get(storageKey);
+    const existingData = await safeStorageGet(storageKey);
     const actions = existingData[storageKey] || [];
     actions.push(actionEntry);
 
@@ -1960,7 +1999,7 @@
     if (!currentPRInfo) return false;
 
     const questionsKey = `pr_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-    const data = await chrome.storage.local.get(questionsKey);
+    const data = await safeStorageGet(questionsKey);
     const questions = data[questionsKey] || [];
     return questions.length > 0;
   }
@@ -1970,7 +2009,7 @@
     if (!currentPRInfo) return false;
 
     const questionsKey = `pr_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-    const data = await chrome.storage.local.get(questionsKey);
+    const data = await safeStorageGet(questionsKey);
     const questions = data[questionsKey] || [];
 
     // Check if any questions are missing answers
@@ -1982,7 +2021,7 @@
     if (!currentPRInfo) return false;
 
     const actionsKey = `actions_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-    const data = await chrome.storage.local.get(actionsKey);
+    const data = await safeStorageGet(actionsKey);
     const actions = data[actionsKey] || [];
     return actions.length > 0;
   }
@@ -1992,7 +2031,7 @@
     if (!currentPRInfo) return false;
 
     const actionsKey = `actions_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-    const data = await chrome.storage.local.get(actionsKey);
+    const data = await safeStorageGet(actionsKey);
     const actions = data[actionsKey] || [];
 
     // Check if any actions are missing summaries
@@ -2006,7 +2045,7 @@
       if (!currentPRInfo) return;
 
       const storageKey = `pr_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-      const data = await chrome.storage.local.get(storageKey);
+      const data = await safeStorageGet(storageKey);
       const questions = data[storageKey] || [];
 
       // Display ALL questions/answers inline in the PR view (both answered and unanswered)
@@ -2030,7 +2069,7 @@
       if (!currentPRInfo) return;
 
       const storageKey = `actions_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-      const data = await chrome.storage.local.get(storageKey);
+      const data = await safeStorageGet(storageKey);
       const actions = data[storageKey] || [];
 
       // Display ALL actions inline in the PR view
@@ -2184,7 +2223,7 @@
 
             // Remove from storage
             const storageKey = `pr_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-            const data = await chrome.storage.local.get(storageKey);
+            const data = await safeStorageGet(storageKey);
             const questions = data[storageKey] || [];
 
             questions.splice(index, 1);
@@ -2260,7 +2299,7 @@
           if (!currentPRInfo) return;
 
           const storageKey = `pr_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-          const data = await chrome.storage.local.get(storageKey);
+          const data = await safeStorageGet(storageKey);
           const questions = data[storageKey] || [];
 
           // Remove this entry
@@ -2404,7 +2443,7 @@
             if (!currentPRInfo) return;
 
             const storageKey = `actions_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-            const data = await chrome.storage.local.get(storageKey);
+            const data = await safeStorageGet(storageKey);
             const actions = data[storageKey] || [];
 
             actions.splice(actionIndex, 1);
@@ -2428,7 +2467,7 @@
             // Restore original question header (need to get question entry first)
             if (header) {
               const questionStorageKey = `pr_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-              const qData = await chrome.storage.local.get(questionStorageKey);
+              const qData = await safeStorageGet(questionStorageKey);
               const questions = qData[questionStorageKey] || [];
               const questionEntry = questions[questionIndex];
 
@@ -2473,7 +2512,7 @@
                   }
 
                   const storageKey = `pr_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-                  const data = await chrome.storage.local.get(storageKey);
+                  const data = await safeStorageGet(storageKey);
                   const questions = data[storageKey] || [];
 
                   questions.splice(questionIndex, 1);
@@ -2608,7 +2647,7 @@
 
               // Remove from storage
               const storageKey = `actions_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-              const data = await chrome.storage.local.get(storageKey);
+              const data = await safeStorageGet(storageKey);
               const actions = data[storageKey] || [];
 
               actions.splice(actionIndex, 1);
@@ -2683,7 +2722,7 @@
             if (!currentPRInfo) return;
 
             const storageKey = `actions_${currentPRInfo.fullRepoName}_${currentPRInfo.prNumber}`;
-            const data = await chrome.storage.local.get(storageKey);
+            const data = await safeStorageGet(storageKey);
             const actions = data[storageKey] || [];
 
             actions.splice(actionIndex, 1);
@@ -3505,6 +3544,7 @@
 
     // Watch for Copilot button changes and sync Claude button with it
     copilotObserver = new MutationObserver(() => {
+      if (!isExtensionAlive()) { markExtensionDead(); return; }
       syncWithCopilotButton();
       // GitHub's React toolbar re-renders and wipes our injected controls, so
       // re-add them whenever they go missing (addActionButtons no-ops if present).

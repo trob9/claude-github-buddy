@@ -45,6 +45,7 @@ async function showSettingsDialog() {
 
   let runMode = currentConfig.runMode || 'interactive';
   if (runMode === 'subscription') runMode = 'interactive'; // back-compat
+  const skipPermissions = currentConfig.skipPermissions === true;
 
   // "Native Claude setup" picker — how the server runs Claude when you trigger
   // Answer Questions / Start Actions.
