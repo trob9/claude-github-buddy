@@ -37,3 +37,5 @@ server/server.pid
 server/launchd.log
 server/launchd.error.log
 server/server.error.log
+README-AUDIT-REPORT.md
+.readme-roast/

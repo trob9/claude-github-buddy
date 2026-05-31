@@ -11,10 +11,22 @@ $ServerDir  = Join-Path $ProjectDir 'server'
 $PidFile = Join-Path $ServerDir 'server.pid'
 $LogFile = Join-Path $ServerDir 'server.log'
 $ErrFile = Join-Path $ServerDir 'server.error.log'
+$envFile = Join-Path $ProjectDir '.env'
+
+# Resolve the ports the same way the server does: .env override, else the
+# defaults that match the extension (47382 HTTP / 47383 WS). Reading from .env
+# means the banner below tells the truth instead of a hardcoded guess.
+$HttpPort = 47382
+$WsPort = 47383
+if (Test-Path $envFile) {
+    $h = Select-String -Path $envFile -Pattern '^HTTP_PORT=' | Select-Object -First 1
+    if ($h) { $v = ($h.Line -replace '^HTTP_PORT=', '').Trim(); if ($v -match '^\d+$') { $HttpPort = [int]$v } }
+    $w = Select-String -Path $envFile -Pattern '^WS_PORT=' | Select-Object -First 1
+    if ($w) { $v = ($w.Line -replace '^WS_PORT=', '').Trim(); if ($v -match '^\d+$') { $WsPort = [int]$v } }
+}
 
 # Resolve the node binary: prefer NODE_PATH from .env, else node on PATH.
 $NodeBin = $null
-$envFile = Join-Path $ProjectDir '.env'
 if (Test-Path $envFile) {
     $line = Select-String -Path $envFile -Pattern '^NODE_PATH=' | Select-Object -First 1
     if ($line) {
@@ -67,7 +79,7 @@ $proc.Id | Out-File -FilePath $PidFile -Encoding ascii
 Start-Sleep -Seconds 2
 if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {
     Write-Host "Server started successfully (PID: $($proc.Id))" -ForegroundColor Green
-    Write-Host "HTTP Port: 13030, WebSocket Port: 13031"
+    Write-Host "HTTP Port: $HttpPort, WebSocket Port: $WsPort"
     Write-Host "Logs: $LogFile"
     Write-Host ""
     Write-Host "   View logs:  .\launchers\server_logs.ps1"

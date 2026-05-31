@@ -23,7 +23,7 @@ Claude Code CLI (claude)
 Git repos on disk
 ```
 
-The extension talks to the local server over HTTP (port 13030) and WebSocket (port 13031). The server spawns Claude Code CLI as a subprocess, streams its JSON output back to the browser.
+The extension talks to the local server over HTTP (port 47382) and WebSocket (port 47383) — these defaults match the ports hardcoded in the extension, so it works with no `.env`. The server spawns Claude Code CLI as a subprocess, streams its JSON output back to the browser.
 
 ---
 
@@ -50,7 +50,8 @@ See `SETUP.md` for full instructions. Quick version:
 
 ```bash
 cp .env.example .env
-# Edit .env: NODE_PATH, HTTP_PORT (13030), WS_PORT (13031), PROJECTS_DIR, PR_REVIEWS_DIR
+# .env is optional; defaults work. Override only if needed:
+# NODE_PATH, HTTP_PORT (47382), WS_PORT (47383), PROJECTS_DIR, PR_REVIEWS_DIR
 
 cd server && npm install
 
@@ -68,8 +69,8 @@ cd server && npm install
 | Var | Purpose |
 |-----|---------|
 | `NODE_PATH` | Full path to node binary (`which node`) |
-| `HTTP_PORT` | HTTP port (default: 13030) |
-| `WS_PORT` | WebSocket port (default: 13031) |
+| `HTTP_PORT` | HTTP port (default: 47382, matches extension) |
+| `WS_PORT` | WebSocket port (default: 47383, matches extension) |
 | `PROJECTS_DIR` | Directory containing your git repos |
 | `PR_REVIEWS_DIR` | Where question/action markdown files are saved |
 

@@ -100,9 +100,13 @@ export const config = {
   // os.homedir() is cross-platform: $HOME on macOS/Linux, %USERPROFILE% on Windows
   projectsDir: process.env.PROJECTS_DIR || userConfig.projectsDir || path.join(os.homedir(), 'Projects'),
 
-  // Server ports (priority: env > hardcoded)
-  httpPort: parseInt(process.env.HTTP_PORT) || 13030,
-  wsPort: parseInt(process.env.WS_PORT) || 13031,
+  // Server ports (priority: env > default). These DEFAULTS MUST MATCH the
+  // ports the Chrome extension talks to (hardcoded as 47382 HTTP / 47383 WS in
+  // the extension scripts). Keeping them in sync here means the tool works
+  // out-of-the-box with no .env at all — overriding them requires changing the
+  // extension too, so don't change one without the other.
+  httpPort: parseInt(process.env.HTTP_PORT) || 47382,
+  wsPort: parseInt(process.env.WS_PORT) || 47383,
 
   // Git configuration - customize based on your git setup.
   // Default to HTTPS: it works out-of-the-box on Windows (Git Credential

@@ -37,8 +37,15 @@ if [ -f "$PID_FILE" ]; then
     fi
 fi
 
-# Also try to stop any node server.js process on port 13030
-NODE_PIDS=$(lsof -ti :13030 2>/dev/null)
+# Also try to stop any node server.js process on the HTTP port.
+# Default to the extension's port (47382); honour an .env override.
+HTTP_PORT=47382
+ENV_FILE="$(dirname "$0")/.env"
+if [ -f "$ENV_FILE" ]; then
+    _p=$(grep -E '^HTTP_PORT=' "$ENV_FILE" | head -1 | cut -d= -f2 | tr -d '[:space:]')
+    [ -n "$_p" ] && HTTP_PORT="$_p"
+fi
+NODE_PIDS=$(lsof -ti :"$HTTP_PORT" 2>/dev/null)
 if [ ! -z "$NODE_PIDS" ]; then
     for NODE_PID in $NODE_PIDS; do
         # Check if it's our server.js

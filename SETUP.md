@@ -30,8 +30,8 @@ which node
 
 # Update .env with your actual values
 NODE_PATH=/path/to/your/node                    # e.g., /opt/homebrew/bin/node
-HTTP_PORT=13030                                  # HTTP server port
-WS_PORT=13031                                    # WebSocket port
+HTTP_PORT=47382                                  # HTTP server port
+WS_PORT=47383                                    # WebSocket port
 PROJECTS_DIR=/path/to/your/projects             # Where your git repos live
 PR_REVIEWS_DIR=/path/to/questions and actions   # Where review files are stored
 ```
@@ -44,8 +44,8 @@ PR_REVIEWS_DIR=/path/to/questions and actions   # Where review files are stored
 **Example configuration:**
 ```bash
 NODE_PATH=/opt/homebrew/bin/node
-HTTP_PORT=13030
-WS_PORT=13031
+HTTP_PORT=47382
+WS_PORT=47383
 PROJECTS_DIR=/Users/yourusername/Projects
 PR_REVIEWS_DIR=/Users/yourusername/claude-github-buddy/questions and actions
 ```
@@ -70,11 +70,11 @@ You should see:
 ```
 🤖 Starting GitHub Buddy Server (daemon mode)...
 📍 Using Node.js: /path/to/node
-🔌 HTTP Port: 13030, WebSocket Port: 13031
+🔌 HTTP Port: 47382, WebSocket Port: 47383
 ✅ Server started successfully (PID: xxxxx)
 ```
 
-Visit http://localhost:13030 to confirm it's running.
+Visit http://localhost:47382 to confirm it's running.
 
 ### 4. Install Chrome Extension
 
@@ -88,7 +88,7 @@ Visit http://localhost:13030 to confirm it's running.
 
 1. Click the extension icon
 2. Go to Settings
-3. Verify the server URL: `http://localhost:13030`
+3. Verify the server URL: `http://localhost:47382`
 4. Update Projects Directory if needed (should match `.env`)
 
 ### 6. (Optional) Enable Auto-Start on Login
@@ -189,7 +189,7 @@ cd ..
 .\launchers\stop_server.ps1           # stop
 ```
 
-Confirm it's up by visiting <http://localhost:13030/health> — you should see `{"status":"ok",...}`.
+Confirm it's up by visiting <http://localhost:47382/health> — you should see `{"status":"ok",...}`.
 
 > **PowerShell execution policy:** if a script is blocked, either run it as
 > `powershell -ExecutionPolicy Bypass -File .\launchers\start_server_daemon.ps1`,
@@ -261,8 +261,8 @@ launchctl list | grep github-buddy
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `NODE_PATH` | Full path to Node.js binary | `$(which node)` |
-| `HTTP_PORT` | HTTP server port | `13030` |
-| `WS_PORT` | WebSocket server port | `13031` |
+| `HTTP_PORT` | HTTP server port | `47382` |
+| `WS_PORT` | WebSocket server port | `47383` |
 | `PROJECTS_DIR` | Root directory for git repositories | `~/Projects` |
 | `PR_REVIEWS_DIR` | Directory for review files | `./questions and actions` |
 | `GIT_GITHUB_PROTOCOL` | Git protocol for github.com | `ssh` |
@@ -307,8 +307,8 @@ These are already in `.gitignore`.
 
 2. Check if ports are already in use:
    ```bash
-   lsof -i :13030
-   lsof -i :13031
+   lsof -i :47382
+   lsof -i :47383
    ```
 
 3. Check logs for errors:
@@ -324,7 +324,7 @@ These are already in `.gitignore`.
    ```
 
 2. Check extension settings:
-   - Server URL should be `http://localhost:13030`
+   - Server URL should be `http://localhost:47382`
    - Port should match `HTTP_PORT` in `.env`
 
 3. Check browser console for errors (F12)
@@ -378,7 +378,7 @@ This means the server should survive sleep/wake cycles in most cases.
 
 ## Port Conflicts
 
-If ports 13030/13031 are in use by another service:
+If ports 47382/47383 are in use by another service:
 
 1. Choose new ports (e.g., 13032/13033)
 2. Update `.env`:
