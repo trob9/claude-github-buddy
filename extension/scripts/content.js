@@ -19,9 +19,9 @@
   function validateCode(entry) {
     try {
       // Find the file in the PR
-      const files = document.querySelectorAll('.file');
+      const files = GHAdapter.getAllFiles();
       for (const file of files) {
-        const fileName = file.querySelector('.file-header [title]')?.getAttribute('title');
+        const fileName = GHAdapter.getFileName(file);
         if (fileName === entry.file) {
           // Parse line numbers from entry.lines (e.g., "L29" or "L29-L35")
           const lineMatch = entry.lines.match(/L(\d+)(?:-L(\d+))?/);
@@ -58,14 +58,14 @@
   function getCodeAtLines(fileElement, startLine, endLine) {
     const codeLines = [];
     for (let lineNum = parseInt(startLine); lineNum <= parseInt(endLine); lineNum++) {
-      const lineNumCell = fileElement.querySelector(`td.blob-num[data-line-number="${lineNum}"]`);
+      const lineNumCell = GHAdapter.getLineCell(fileElement, lineNum);
       if (!lineNumCell) return null;
 
-      const row = lineNumCell.closest('tr');
-      const codeCell = row?.querySelector('.blob-code .blob-code-inner');
+      const row = GHAdapter.getLineRow(lineNumCell);
+      const codeCell = GHAdapter.getCodeCell(row);
       if (!codeCell) return null;
 
-      const marker = codeCell.getAttribute('data-code-marker') || ' ';
+      const marker = GHAdapter.getCodeMarker(codeCell);
       const codeText = codeCell.textContent;
       codeLines.push(`${marker} ${codeText}`);
     }
@@ -101,56 +101,27 @@
   let currentHoveredRow = null; // Track currently hovered row for non-selection questions
   let isClaudeButtonActive = false; // Track if Claude button or menu is being used
 
-  // Parse PR info from URL and page
+  // Parse PR info from URL and page (delegated to GHAdapter for view-agnostic reads)
   function getPRInfo() {
-    const urlMatch = window.location.pathname.match(/\/([^\/]+)\/([^\/]+)\/pull\/(\d+)/);
-    if (!urlMatch) return null;
-
-    const [, owner, repo, prNumber] = urlMatch;
-    const prTitle = document.querySelector('.js-issue-title')?.textContent?.trim() || `PR-${prNumber}`;
-
-    // Extract branch names from the PR page
-    // GitHub shows "base <- head" in the branch selector
-    const branchInfo = document.querySelector('.head-ref, [data-hovercard-type="commit_range"]');
-    let baseBranch = 'unknown';
-    let headBranch = 'unknown';
-
-    if (branchInfo) {
-      // Try to find base and head branch elements
-      const baseElement = document.querySelector('.base-ref');
-      const headElement = document.querySelector('.head-ref');
-
-      if (baseElement) baseBranch = baseElement.textContent.trim();
-      if (headElement) headBranch = headElement.textContent.trim();
-    }
-
-    return {
-      owner,
-      repo,
-      prNumber,
-      prTitle: prTitle, // Keep original title with spaces
-      fullRepoName: `${owner}/${repo}`,
-      baseBranch,
-      headBranch
-    };
+    return GHAdapter.getPRInfo();
   }
 
-  // Watch for Copilot button visibility and position changes
+  // Decide whether the Claude button should be on-screen, and where.
+  //
+  // The old approach piggy-backed on GitHub's per-line Copilot side menu
+  // (`.DiffLinesMenu-module__diff-button-container--fFHPz` +
+  // `[data-testid="copilot-ask-menu"]`). GitHub removed that side menu when
+  // it introduced the `<copilot-diff-entry>` Web Component, so the anchor
+  // never resolves. We now ask GHAdapter.findMountPosition() which picks the
+  // best available anchor — primarily the currently-selected diff line.
+  //
+  // Function name kept for backwards-compat with the existing call sites.
   async function syncWithCopilotButton() {
-    const copilotContainer = document.querySelector('.DiffLinesMenu-module__diff-button-container--fFHPz');
-    const copilotButton = document.querySelector('[data-testid="copilot-ask-menu"]');
+    const pos = GHAdapter.findMountPosition();
 
-    if (copilotContainer && copilotButton) {
-      // Copilot button is visible - show Claude button next to it
-      const copilotRect = copilotContainer.getBoundingClientRect();
+    if (pos) {
+      lastCopilotPosition = { left: pos.left, top: pos.top };
 
-      // Store position for later use
-      lastCopilotPosition = {
-        left: copilotRect.left - 19 - 60,
-        top: copilotRect.top + window.scrollY + 1
-      };
-
-      // Get or create Claude button
       let claudeButton = document.getElementById('claude-pr-buddy-button');
       if (!claudeButton) {
         await createClaudeButton();
@@ -158,20 +129,18 @@
       }
 
       if (claudeButton) {
-        // Position Claude button to the left of Copilot
         claudeButton.style.left = `${lastCopilotPosition.left}px`;
         claudeButton.style.top = `${lastCopilotPosition.top}px`;
       }
-
     } else if (lastCopilotPosition && isClaudeButtonActive) {
-      // Copilot would hide but Claude is being used - keep Claude at last position
+      // Anchor disappeared (line de-selected) but the user is mid-interaction.
+      // Keep the button pinned to its last known position.
       const claudeButton = document.getElementById('claude-pr-buddy-button');
       if (claudeButton) {
         claudeButton.style.left = `${lastCopilotPosition.left}px`;
         claudeButton.style.top = `${lastCopilotPosition.top}px`;
       }
     } else {
-      // Copilot button is hidden - only hide Claude if not being interacted with
       const claudeButton = document.getElementById('claude-pr-buddy-button');
       if (claudeButton && !claudeButton.matches(':hover') && !isClaudeButtonActive) {
         removeClaudeButton();
@@ -182,7 +151,7 @@
 
   // Handle selection for question capture
   function handleSelection(event) {
-    const highlightedLines = document.querySelectorAll('.blob-code.selected-line');
+    const highlightedLines = GHAdapter.getSelectedLines();
 
     if (highlightedLines.length > 0) {
       console.log(`Found ${highlightedLines.length} selected lines`);
@@ -199,35 +168,18 @@
     const lineNumbers = [];
 
     lines.forEach(line => {
-      const codeInner = line.querySelector('.blob-code-inner');
+      const row = GHAdapter.getLineRow(line);
+      const codeInner = GHAdapter.getCodeCell(row) ||
+                        (line.matches('.blob-code-inner') ? line : line.querySelector('.blob-code-inner'));
       if (!codeInner) return;
 
-      // Get diff marker from data attribute (more reliable than class)
-      const marker = codeInner.getAttribute('data-code-marker') || ' ';
-
-      // Get the code text (without the marker span)
+      const marker = GHAdapter.getCodeMarker(codeInner);
       const codeText = codeInner.textContent;
       codeLines.push(`${marker} ${codeText}`);
 
-      // Extract line number from the parent row
-      // The selected-line class is on the <td>, we need to go up to <tr> and find the line number <td>
-      const row = line.closest('tr');
-      if (row) {
-        // GitHub shows both L (left/old) and R (right/new) line numbers
-        // We want the R (right) side which shows the line number in the new file
-        // The R side has id ending with "R{number}" and class "js-blob-rnum"
-        const rightLineNumCell = row.querySelector('td.blob-num.js-blob-rnum[data-line-number]');
-
-        // Fallback to any line number cell if right side doesn't exist (for deletions)
-        const lineNumCell = rightLineNumCell || row.querySelector('td.blob-num[data-line-number]');
-
-        if (lineNumCell) {
-          const lineNum = lineNumCell.getAttribute('data-line-number');
-          if (lineNum) {
-            lineNumbers.push(lineNum);
-          }
-        }
-      }
+      const lineNumCell = GHAdapter.getRightLineNum(row);
+      const lineNum = lineNumCell?.getAttribute('data-line-number');
+      if (lineNum) lineNumbers.push(lineNum);
     });
 
     const codeText = codeLines.join('\n');
@@ -258,8 +210,7 @@
   }
 
   function getFileNameFromDiff(element) {
-    const fileHeader = element.closest('.file')?.querySelector('.file-header [title]');
-    return fileHeader?.getAttribute('title') || 'unknown-file';
+    return GHAdapter.getFileName(GHAdapter.findFileFromLine(element));
   }
 
   // Create the Claude button (called by syncWithCopilotButton)
@@ -1457,7 +1408,7 @@
 
   function showQuestionDialog() {
     // Check if we have a real selection (yellow highlight) or just a hover
-    const hasRealSelection = document.querySelectorAll('.blob-code.selected-line').length > 0;
+    const hasRealSelection = GHAdapter.getSelectedLines().length > 0;
 
     // If no real selection, always capture the currently hovered row
     if (!hasRealSelection && currentHoveredRow) {
@@ -1614,7 +1565,7 @@
 
     // For ad-hoc actions, we need a code selection
     if (!isQuestionLinked) {
-      const hasRealSelection = document.querySelectorAll('.blob-code.selected-line').length > 0;
+      const hasRealSelection = GHAdapter.getSelectedLines().length > 0;
 
       if (!hasRealSelection && currentHoveredRow) {
         captureHoveredRowAsSelection();
@@ -1692,19 +1643,15 @@
   function captureHoveredRowAsSelection() {
     if (!currentHoveredRow) return;
 
-    const codeCell = currentHoveredRow.querySelector('.blob-code .blob-code-inner');
+    const codeCell = GHAdapter.getCodeCell(currentHoveredRow);
     if (!codeCell) return;
 
-    // Get diff marker
-    const marker = codeCell.getAttribute('data-code-marker') || ' ';
+    const marker = GHAdapter.getCodeMarker(codeCell);
     const codeText = codeCell.textContent;
 
-    // Get line number
-    const rightLineNumCell = currentHoveredRow.querySelector('td.blob-num.js-blob-rnum[data-line-number]');
-    const lineNumCell = rightLineNumCell || currentHoveredRow.querySelector('td.blob-num[data-line-number]');
+    const lineNumCell = GHAdapter.getRightLineNum(currentHoveredRow);
     const lineNum = lineNumCell?.getAttribute('data-line-number') || 'unknown';
 
-    // Get file name
     const file = getFileNameFromDiff(currentHoveredRow);
 
     currentSelection = {
@@ -2723,16 +2670,10 @@
     }
   }
 
-  // Find a table row by line number
+  // Find a diff row by line number, in either legacy or new-view DOM.
   function findRowByLineNumber(file, lineNumber) {
-    // Look for the line number in the right-side line number cells
-    const lineNumCells = file.querySelectorAll('td.blob-num[data-line-number]');
-    for (const cell of lineNumCells) {
-      if (cell.getAttribute('data-line-number') === lineNumber) {
-        return cell.closest('tr');
-      }
-    }
-    return null;
+    const cell = GHAdapter.getLineCell(file, lineNumber);
+    return cell ? GHAdapter.getLineRow(cell) : null;
   }
 
   function formatMarkdown(text) {
@@ -3164,29 +3105,26 @@
   // Extract all file contents from the PR diff view
   function extractFileContents() {
     const fileContents = {};
-    const files = document.querySelectorAll('.file');
+    const files = GHAdapter.getAllFiles();
 
     files.forEach(file => {
-      const fileName = file.querySelector('.file-header [title]')?.getAttribute('title');
-      if (!fileName) return;
+      const fileName = GHAdapter.getFileName(file);
+      if (!fileName || fileName === 'unknown-file') return;
 
-      // Extract all lines from this file
+      // Walk every diff row. Legacy view uses <tr>; the new view uses divs
+      // with data-testid="diff-line" — covered by the adapter's selectors.
       const lines = [];
-      const rows = file.querySelectorAll('tr');
+      const rows = file.querySelectorAll('tr, [data-testid="diff-line"]');
 
       rows.forEach(row => {
-        const lineNumCell = row.querySelector('td.blob-num[data-line-number]');
-        const codeCell = row.querySelector('.blob-code .blob-code-inner');
+        const lineNumCell = GHAdapter.getRightLineNum(row);
+        const codeCell = GHAdapter.getCodeCell(row);
 
         if (lineNumCell && codeCell) {
-          const lineNum = lineNumCell.getAttribute('data-line-number');
-          const marker = codeCell.getAttribute('data-code-marker') || ' ';
-          const codeText = codeCell.textContent;
-
           lines.push({
-            lineNum: lineNum,
-            marker: marker,
-            code: codeText
+            lineNum: lineNumCell.getAttribute('data-line-number'),
+            marker: GHAdapter.getCodeMarker(codeCell),
+            code: codeCell.textContent
           });
         }
       });
@@ -3210,10 +3148,10 @@
     // Listen for clicks (for permalink selections)
     document.addEventListener('click', handleSelection);
 
-    // Track hovered row for non-selection questions
+    // Track hovered row for non-selection questions (view-agnostic via adapter).
     document.addEventListener('mouseover', (e) => {
-      const row = e.target.closest('tr');
-      if (row && row.querySelector('.blob-code')) {
+      const row = GHAdapter.getLineRow(e.target);
+      if (row && GHAdapter.getCodeCell(row)) {
         currentHoveredRow = row;
       }
     });
