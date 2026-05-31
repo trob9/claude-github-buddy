@@ -1,5 +1,10 @@
 # Claude GitHub Buddy
 
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Manifest V3](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?logo=googlechrome&logoColor=white)
+![Platforms: Windows | macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555)
+![Built with Claude](https://img.shields.io/badge/built%20with-Claude-D97757)
+
 A Chrome extension that brings a Claude assistant directly into the **Files changed** tab of GitHub PRs. Highlight code to ask Claude questions inline, mark sections for action, and let Claude answer or implement changes — all from your browser. Works on **Windows and macOS**, and (by default) uses your existing **Claude subscription** — no API key required.
 
 ## Features
